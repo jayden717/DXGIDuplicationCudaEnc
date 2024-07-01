@@ -121,7 +121,7 @@ int Grab60FPS(int nFrames, int argc,char *argv[])
 int main(int argc, char *argv[])
 {
     /// The app will try to capture 20 times, by default
-    int nFrames = 20;
+    int nFrames = 60;
     int ret = 0;
     bool useNvenc = true;
 

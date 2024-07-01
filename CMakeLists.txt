@@ -26,7 +26,6 @@ set(SOURCES
         ${NVCODEC_PATH}/NvEncoder/NvEncoder.cpp
         ${NVCODEC_PATH}/NvEncoder/NvEncoderCuda.cpp
         ${NVCODEC_PATH}/NvEncoder/NvEncoderD3D11.cpp
-        include/Core.hpp
         include/DDAImpl.h
         include/Defs.h
         src/Encoders/CudaH264.cpp
