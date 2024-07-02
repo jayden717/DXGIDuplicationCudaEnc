@@ -29,7 +29,7 @@ private:
     NvEncoderCuda *pEnc;
     /// D3D11 device context used for the operations demonstrated in this application
     ID3D11Device *pD3DDev = nullptr;
-    CUdeviceptr dptr;
+    // CUdeviceptr dptr;
 
 
     /// D3D11 RGB Texture2D object that recieves the captured image from DDA

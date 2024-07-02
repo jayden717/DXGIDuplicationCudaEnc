@@ -186,11 +186,31 @@ HRESULT CudaH264::InitDup()
 }
 HRESULT CudaH264::Capture(int wait)
 {
-    HRESULT hr = pDDAWrapper->GetCapturedFrame(&pDupTex2D, wait); // Release after preproc
+    HRESULT hr = pDDAWrapper->GetCapturedFrame(&pDupTex2D, wait);
+    pEncBuf = nullptr;
     if (FAILED(hr))
     {
         failCount++;
     }
+    // Define the desired texture description
+    D3D11_TEXTURE2D_DESC desc;
+    ZeroMemory(&desc, sizeof(desc));
+    desc.Width = 1920;
+    desc.Height = 1080;
+    desc.MipLevels = 1;
+    desc.ArraySize = 1;
+    desc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+    desc.SampleDesc.Count = 1;
+    desc.SampleDesc.Quality = 0;
+    desc.Usage = D3D11_USAGE_DEFAULT;
+    desc.BindFlags = 40;
+    desc.CPUAccessFlags = 0;
+    desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED;
+
+    // Create the intermediate texture
+    hr = pD3DDev->CreateTexture2D(&desc, nullptr, &pEncBuf);
+
+
     return hr;
 }
 
@@ -247,7 +267,7 @@ HRESULT CudaH264::Preproc()
     HRESULT hr = S_OK;
     size_t size;
     CUgraphicsResource cuResource;
-    
+
     // declare texDesc;
     D3D11_TEXTURE2D_DESC texDesc;
     pDupTex2D->GetDesc(&texDesc);
@@ -272,10 +292,23 @@ HRESULT CudaH264::Preproc()
     std::cout << "  CPUAccessFlags: " << texDesc.CPUAccessFlags << std::endl;
     std::cout << "  MiscFlags: " << texDesc.MiscFlags << std::endl;
 
+    pEncBuf->GetDesc(&texDesc);
+        std::cout << "Copy Texture Description:" << std::endl;
+    std::cout << "  Width: " << texDesc.Width << std::endl;
+    std::cout << "  Height: " << texDesc.Height << std::endl;
+    std::cout << "  MipLevels: " << texDesc.MipLevels << std::endl;
+    std::cout << "  ArraySize: " << texDesc.ArraySize << std::endl;
+    std::cout << "  Format: " << texDesc.Format << std::endl;
+    std::cout << "  SampleDesc.Count: " << texDesc.SampleDesc.Count << std::endl;
+    std::cout << "  SampleDesc.Quality: " << texDesc.SampleDesc.Quality << std::endl;
+    std::cout << "  Usage: " << texDesc.Usage << std::endl;
+    std::cout << "  BindFlags: " << texDesc.BindFlags << std::endl;
+    std::cout << "  CPUAccessFlags: " << texDesc.CPUAccessFlags << std::endl;
+    std::cout << "  MiscFlags: " << texDesc.MiscFlags << std::endl;
+
     // Register the D3D11 resource with CUDA with context
 
-
-    CUresult cudaStatus = cuGraphicsD3D11RegisterResource(&cuResource, pDupTex2D, CU_GRAPHICS_REGISTER_FLAGS_READ_ONLY);
+    CUresult cudaStatus = cuGraphicsD3D11RegisterResource(&cuResource, pEncBuf, CU_GRAPHICS_REGISTER_FLAGS_NONE);
     if (cudaStatus != CUDA_SUCCESS)
     {
         std::cerr << "Failed to register D3D11 resource with CUDA. : cudaError : " << cudaStatus << std::endl;
@@ -287,12 +320,16 @@ HRESULT CudaH264::Preproc()
         std::cerr << "Failed to map D3D11 resource to CUDA." << std::endl;
         return E_FAIL;
     }
+    CUdeviceptr dptr;
+    size_t size;
+
     cudaStatus = cuGraphicsResourceGetMappedPointer(&dptr, &size, cuResource);
-    
     // Ensure the CUDA resource is mapped correctly
+    if (cudaStatus != CUDA_SUCCESS)
+        std::cerr << "Failed to get CUDA device pointer. : cudaError : " << cudaStatus << std::endl;
     if (!dptr)
     {
-        std::cerr << "Failed to get CUDA device pointer." << std::endl;
+        std::cerr << "Invalid device pointer." << std::endl;
         cuGraphicsUnmapResources(1, &cuResource, 0);
         return E_FAIL;
     }
