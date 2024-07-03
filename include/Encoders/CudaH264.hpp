@@ -4,9 +4,8 @@
 #include <memory>
 #include "DDAImpl.h"
 #include "NvEncoder/NvEncoderCuda.h"
-//#include "Utils/NvEncoderCLIOptions.h"
 #include "NvEncoder/NvEncoderD3D11.h"
-//#include "Utils/Logger.h"
+
 
 class CudaH264 : public IEncoder
 {
@@ -29,7 +28,9 @@ private:
     NvEncoderCuda *pEnc;
     /// D3D11 device context used for the operations demonstrated in this application
     ID3D11Device *pD3DDev = nullptr;
-    // CUdeviceptr dptr;
+    CUdeviceptr dptr;
+    size_t size;
+    CUarray cuArray;
 
 
     /// D3D11 RGB Texture2D object that recieves the captured image from DDA
@@ -58,7 +59,9 @@ public:
     explicit CudaH264(int argc, char *_argv[]);
     ~CudaH264() override;
     HRESULT InitEnc() override;
-    HRESULT Encode() override;
+    HRESULT Encode(){}
+    HRESULT Encode(CUarray_st *cuArray);
+    
     void Cleanup(bool bDelete) override;
 
     // Desktop duplication

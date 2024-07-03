@@ -115,21 +115,29 @@ HRESULT CudaH264::InitEnc()
     return hr;
 }
 
-HRESULT CudaH264::Encode()
+HRESULT CudaH264::Encode(CUarray_st *cuArray)
 {
     HRESULT hr = S_OK;
     const NvEncInputFrame *encoderInputFrame = pEnc->GetNextInputFrame();
-    NvEncoderCuda::CopyToDeviceFrame(cuContext,
-                                     reinterpret_cast<void *>(dptr), // Use the CUDA device pointer directly
-                                     0,
-                                     (CUdeviceptr)encoderInputFrame->inputPtr,
-                                     encoderInputFrame->pitch,
-                                     pEnc->GetEncodeWidth(),
-                                     pEnc->GetEncodeHeight(),
-                                     CU_MEMORYTYPE_DEVICE, // Data is now on device
-                                     encoderInputFrame->bufferFormat,
-                                     encoderInputFrame->chromaOffsets,
-                                     encoderInputFrame->numChromaPlanes);
+    NV_ENC_PIC_PARAMS encPicParams = {NV_ENC_PIC_PARAMS_VER};
+    // Copy the CUDA array to the encoder input frame
+    // encoderInputFrame->inputPtr being a device pointer
+    CUDA_MEMCPY2D copyParam = {0};
+    copyParam.srcArray = cuArray;
+    copyParam.srcMemoryType = CU_MEMORYTYPE_ARRAY; // Use CU_MEMORYTYPE_ARRAY for src
+    copyParam.dstMemoryType = CU_MEMORYTYPE_DEVICE;
+    copyParam.dstDevice = (CUdeviceptr)encoderInputFrame->inputPtr;
+    copyParam.dstPitch = encoderInputFrame->pitch;
+    copyParam.WidthInBytes = pEnc->GetEncodeWidth() * 4;  // BGRA: 4 bytes per pixel
+    copyParam.Height = pEnc->GetEncodeHeight();
+
+    CUresult cudaStatus = cuMemcpy2D(&copyParam);
+    if (cudaStatus != CUDA_SUCCESS)
+    {
+        std::cerr << "Failed to copy CUDA array to device memory. : cudaError : " << cudaStatus << std::endl;
+        return E_FAIL;
+    }
+
     try
     {
         pEnc->EncodeFrame(vPacket);
@@ -209,7 +217,8 @@ HRESULT CudaH264::Capture(int wait)
 
     // Create the intermediate texture
     hr = pD3DDev->CreateTexture2D(&desc, nullptr, &pEncBuf);
-
+    // Copy pDupTex2D to pEncBuf
+    pCtx->CopyResource(pEncBuf, pDupTex2D);
 
     return hr;
 }
@@ -267,73 +276,45 @@ HRESULT CudaH264::Preproc()
     HRESULT hr = S_OK;
     size_t size;
     CUgraphicsResource cuResource;
-
-    // declare texDesc;
-    D3D11_TEXTURE2D_DESC texDesc;
-    pDupTex2D->GetDesc(&texDesc);
-    // verify if the texture is valid
-    if (!pDupTex2D)
-    {
-        std::cerr << "Invalid texture." << std::endl;
+    CUstream stream = 0;
+    CUresult cudaStatus = CUDA_SUCCESS;
+    CUarray_st* cuArray = nullptr;
+        // Create CUDA stream
+    cudaStatus = cuStreamCreate(&stream, CU_STREAM_DEFAULT);
+    if (cudaStatus != CUDA_SUCCESS) {
+        std::cerr << "Failed to create CUDA stream. Error code: " << cudaStatus << std::endl;
         return E_FAIL;
     }
-    // print the desc
-    // Print the texture description
-    std::cout << "Texture Description:" << std::endl;
-    std::cout << "  Width: " << texDesc.Width << std::endl;
-    std::cout << "  Height: " << texDesc.Height << std::endl;
-    std::cout << "  MipLevels: " << texDesc.MipLevels << std::endl;
-    std::cout << "  ArraySize: " << texDesc.ArraySize << std::endl;
-    std::cout << "  Format: " << texDesc.Format << std::endl;
-    std::cout << "  SampleDesc.Count: " << texDesc.SampleDesc.Count << std::endl;
-    std::cout << "  SampleDesc.Quality: " << texDesc.SampleDesc.Quality << std::endl;
-    std::cout << "  Usage: " << texDesc.Usage << std::endl;
-    std::cout << "  BindFlags: " << texDesc.BindFlags << std::endl;
-    std::cout << "  CPUAccessFlags: " << texDesc.CPUAccessFlags << std::endl;
-    std::cout << "  MiscFlags: " << texDesc.MiscFlags << std::endl;
 
-    pEncBuf->GetDesc(&texDesc);
-        std::cout << "Copy Texture Description:" << std::endl;
-    std::cout << "  Width: " << texDesc.Width << std::endl;
-    std::cout << "  Height: " << texDesc.Height << std::endl;
-    std::cout << "  MipLevels: " << texDesc.MipLevels << std::endl;
-    std::cout << "  ArraySize: " << texDesc.ArraySize << std::endl;
-    std::cout << "  Format: " << texDesc.Format << std::endl;
-    std::cout << "  SampleDesc.Count: " << texDesc.SampleDesc.Count << std::endl;
-    std::cout << "  SampleDesc.Quality: " << texDesc.SampleDesc.Quality << std::endl;
-    std::cout << "  Usage: " << texDesc.Usage << std::endl;
-    std::cout << "  BindFlags: " << texDesc.BindFlags << std::endl;
-    std::cout << "  CPUAccessFlags: " << texDesc.CPUAccessFlags << std::endl;
-    std::cout << "  MiscFlags: " << texDesc.MiscFlags << std::endl;
-
-    // Register the D3D11 resource with CUDA with context
-
-    CUresult cudaStatus = cuGraphicsD3D11RegisterResource(&cuResource, pEncBuf, CU_GRAPHICS_REGISTER_FLAGS_NONE);
+    cudaStatus = cuGraphicsD3D11RegisterResource(&cuResource, pEncBuf, CU_GRAPHICS_REGISTER_FLAGS_NONE);
     if (cudaStatus != CUDA_SUCCESS)
     {
         std::cerr << "Failed to register D3D11 resource with CUDA. : cudaError : " << cudaStatus << std::endl;
         return E_FAIL;
     }
-    cudaStatus = cuGraphicsMapResources(1, &cuResource, 0);
-    if (cudaStatus != CUDA_SUCCESS)
-    {
-        std::cerr << "Failed to map D3D11 resource to CUDA." << std::endl;
-        return E_FAIL;
-    }
-    CUdeviceptr dptr;
-    size_t size;
 
-    cudaStatus = cuGraphicsResourceGetMappedPointer(&dptr, &size, cuResource);
-    // Ensure the CUDA resource is mapped correctly
-    if (cudaStatus != CUDA_SUCCESS)
-        std::cerr << "Failed to get CUDA device pointer. : cudaError : " << cudaStatus << std::endl;
-    if (!dptr)
-    {
-        std::cerr << "Invalid device pointer." << std::endl;
-        cuGraphicsUnmapResources(1, &cuResource, 0);
+    // Map the resource for access by CUDA
+    cudaStatus = cuGraphicsMapResources(1, &cuResource, stream);
+    if (cudaStatus != CUDA_SUCCESS) {
+        std::cerr << "Failed to map D3D11 resource to CUDA. Error code: " << cudaStatus << std::endl;
+        cuGraphicsUnregisterResource(cuResource);  // Cleanup before exit
         return E_FAIL;
     }
-    Encode();
+
+    // Get the CUDA array from the D3D11 resource
+    unsigned int subResourceIndex = 0; // Typically 0 for the first subresource
+    CUresult result = cuGraphicsSubResourceGetMappedArray(&cuArray, cuResource, subResourceIndex, 0);
+    if (result != CUDA_SUCCESS) {
+        // Handle error
+        std::cerr << "Failed to get CUDA array from D3D11 resource. : cudaError : " << result << std::endl;
+    }
+
+    Encode(cuArray);
+    cudaStatus = cuGraphicsUnmapResources(1, &cuResource, stream);
+    if (cudaStatus != CUDA_SUCCESS) {
+        std::cerr << "Failed to unmap D3D11 resource from CUDA. Error code: " << cudaStatus << std::endl;
+        return E_FAIL;
+    }
     returnIfError(hr);
     return hr;
 }
