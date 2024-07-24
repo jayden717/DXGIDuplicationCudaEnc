@@ -26,8 +26,8 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "Defs.h"
-#include "DDAImpl.h"
+#include "Defs.hpp"
+#include "DDAImpl.hpp"
 #include <iomanip>
 
 /// Initialize DDA
@@ -139,6 +139,7 @@ HRESULT DDAImpl::GetCapturedFrame(ID3D11Texture2D **ppTex2D, int wait)
         return hr;
     }
 
+
     LARGE_INTEGER pts = frameInfo.LastPresentTime;  MICROSEC_TIME(pts, qpcFreq);
     LONGLONG interval = pts.QuadPart - lastPTS.QuadPart;
 
@@ -146,6 +147,7 @@ HRESULT DDAImpl::GetCapturedFrame(ID3D11Texture2D **ppTex2D, int wait)
     ofs << "frameNo: " << frameno << " | Accumulated: "<< frameInfo.AccumulatedFrames <<" | PTS: " << frameInfo.LastPresentTime.QuadPart << " | PTSInterval: "<< (interval)*1000<<endl;
     lastPTS = pts; // store microsec value
     frameno += frameInfo.AccumulatedFrames;
+
     return hr;
 }
 

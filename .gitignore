@@ -34,3 +34,9 @@
 # build folder
 build/
 cmake-build-debug/
+
+# IDE
+.idea/
+.vscode/
+.vs
+CMakeSettings.json

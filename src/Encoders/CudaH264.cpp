@@ -1,8 +1,13 @@
 #include "CudaH264.hpp"
 #include "cudad3d11.h"
+#include <wrl/client.h>
+#include <iostream>
+#include "d3dcompiler.h"
+#include <fstream>
+#include <winnt.h>
 
 CudaH264::CudaH264(int _argc, char *_argv[])
-try : argc(_argc), argv(_argv), fpOut("out.bgra", std::ios::out | std::ios::binary), iGpu(0)
+try : argc(_argc), argv(_argv), fpOut("out.h264", std::ios::out | std::ios::binary), iGpu(0)
 {
 
     int iGpu = 0;
@@ -17,11 +22,6 @@ try : argc(_argc), argv(_argv), fpOut("out.bgra", std::ios::out | std::ios::bina
     {
         std::cout << "GPU ordinal out of range. Should be within [" << 0 << ", " << nGpu - 1 << "]" << std::endl;
     }
-    /// Parse arguments
-    //    CheckInputFile(szInFilePath);
-    //
-    //    if (!*szOutFilePath)
-    //        sprintf(szOutFilePath, encodeCLIOptions.IsCodecH264() ? "out.h264" : "out.hevc");
 }
 catch (...)
 {
@@ -31,6 +31,7 @@ catch (...)
 
 CudaH264::~CudaH264()
 {
+    Cleanup(true);
 }
 HRESULT CudaH264::Init()
 {
@@ -45,6 +46,8 @@ HRESULT CudaH264::Init()
     returnIfError(hr);
     return hr;
 }
+
+/// For raw writing
 HRESULT CudaH264::SaveFrameToFile(const void *pBuffer, int width, int height)
 {
     if (!fpOut.is_open())
@@ -62,164 +65,23 @@ HRESULT CudaH264::SaveFrameToFile(const void *pBuffer, int width, int height)
 
     return S_OK;
 }
-
-HRESULT CudaH264::InitOutFile()
-{
-    if (!fpOut)
-    {
-        std::ostringstream err;
-        err << "Unable to open output file: out.bgra" << std::endl;
-        throw std::invalid_argument(err.str());
-    }
-    return S_OK;
-}
-HRESULT CudaH264::InitEnc()
+HRESULT CudaH264::WriteRawFrame(ID3D11Texture2D *pBuffer) // write pBuffer into a file .bgra file
 {
     HRESULT hr = S_OK;
-    DWORD w = pDDAWrapper->getWidth();
-    DWORD h = pDDAWrapper->getHeight();
-
-    char szDeviceName[80];
-    cuDeviceGet(&cuDevice, iGpu);
-    cuDeviceGetName(szDeviceName, sizeof(szDeviceName), cuDevice);
-    std::cout << "GPU in use: " << szDeviceName << std::endl;
-    CUresult res = cuCtxCreate(&cuContext, 0, cuDevice);
-    if (cuContext == NULL)
-    {
-        std::ostringstream err;
-        std::cerr << res << std::endl;
-        err << "Unable to create CUDA context" << std::endl;
-        throw std::invalid_argument(err.str());
-    }
-    NV_ENC_BUFFER_FORMAT eFormat = NV_ENC_BUFFER_FORMAT_ABGR;
-    int iGpu = 0;
-    try
-    {
-        pEnc = new NvEncoderCuda(cuContext, w, h, eFormat); // TODO Error management
-    }
-    catch (std::exception &error)
-    {
-        std::cerr << error.what() << std::endl;
-    }
-
-    NV_ENC_INITIALIZE_PARAMS initializeParams = {NV_ENC_INITIALIZE_PARAMS_VER};
-    NV_ENC_CONFIG encodeConfig = {NV_ENC_CONFIG_VER};
-    ZeroMemory(&initializeParams, sizeof(initializeParams));
-    ZeroMemory(&encodeConfig, sizeof(encodeConfig));
-    initializeParams.encodeConfig = &encodeConfig;
-    initializeParams.encodeWidth = w;
-    initializeParams.encodeHeight = h;
-    pEnc->CreateDefaultEncoderParams(&initializeParams, NV_ENC_CODEC_H264_GUID, NV_ENC_PRESET_LOW_LATENCY_HP_GUID);
-
-    pEnc->CreateEncoder(&initializeParams);
-    return hr;
-}
-
-HRESULT CudaH264::Encode(CUarray_st *cuArray)
-{
-    HRESULT hr = S_OK;
-    const NvEncInputFrame *encoderInputFrame = pEnc->GetNextInputFrame();
-    NV_ENC_PIC_PARAMS encPicParams = {NV_ENC_PIC_PARAMS_VER};
-    // Copy the CUDA array to the encoder input frame
-    // encoderInputFrame->inputPtr being a device pointer
-    CUDA_MEMCPY2D copyParam = {0};
-    copyParam.srcArray = cuArray;
-    copyParam.srcMemoryType = CU_MEMORYTYPE_ARRAY; // Use CU_MEMORYTYPE_ARRAY for src
-    copyParam.dstMemoryType = CU_MEMORYTYPE_DEVICE;
-    copyParam.dstDevice = (CUdeviceptr)encoderInputFrame->inputPtr;
-    copyParam.dstPitch = encoderInputFrame->pitch;
-    copyParam.WidthInBytes = pEnc->GetEncodeWidth() * 4;  // BGRA: 4 bytes per pixel
-    copyParam.Height = pEnc->GetEncodeHeight();
-
-    CUresult cudaStatus = cuMemcpy2D(&copyParam);
-    if (cudaStatus != CUDA_SUCCESS)
-    {
-        std::cerr << "Failed to copy CUDA array to device memory. : cudaError : " << cudaStatus << std::endl;
-        return E_FAIL;
-    }
-
-    try
-    {
-        pEnc->EncodeFrame(vPacket);
-        WriteEncOutput();
-    }
-    catch (...)
-    {
-        hr = E_FAIL;
-    }
-    return hr;
-}
-
-void CudaH264::Cleanup(bool bDelete)
-{
-    if (pDDAWrapper)
-    {
-        pDDAWrapper->Cleanup();
-        delete pDDAWrapper;
-        pDDAWrapper = nullptr;
-    }
-    SAFE_RELEASE(pDupTex2D);
-    if (bDelete)
-    {
-        if (pEnc)
-        {
-            /// Flush the encoder and write all output to file before destroying the encoder
-            pEnc->EndEncode(vPacket);
-            WriteEncOutput();
-            pEnc->DestroyEncoder();
-            ZeroMemory(&initializeParams, sizeof(NV_ENC_INITIALIZE_PARAMS));
-            ZeroMemory(&encodeConfig, sizeof(NV_ENC_CONFIG));
-        }
-
-        //            if (pColorConv)
-        //            {
-        //                delete pColorConv;
-        //                pColorConv = nullptr;
-        //            }
-        SAFE_RELEASE(pD3DDev);
-        SAFE_RELEASE(pCtx);
-    }
-}
-
-HRESULT CudaH264::InitDup()
-{
-    HRESULT hr = S_OK;
-    if (!pDDAWrapper)
-    {
-        pDDAWrapper = new DDAImpl(pD3DDev, pCtx);
-        hr = pDDAWrapper->Init();
-        returnIfError(hr);
-    }
-    return hr;
-}
-HRESULT CudaH264::Capture(int wait)
-{
-    HRESULT hr = pDDAWrapper->GetCapturedFrame(&pDupTex2D, wait);
-    pEncBuf = nullptr;
+    D3D11_TEXTURE2D_DESC desc;
+    pBuffer->GetDesc(&desc);
+    D3D11_MAPPED_SUBRESOURCE mappedResource;
+    hr = pCtx->Map(pBuffer, 0, D3D11_MAP_READ, 0, &mappedResource);
     if (FAILED(hr))
     {
-        failCount++;
+        std::cerr << "Failed to map D3D11 texture for reading. Error code: " << std::hex << hr << std::endl;
+        return hr;
     }
-    // Define the desired texture description
-    D3D11_TEXTURE2D_DESC desc;
-    ZeroMemory(&desc, sizeof(desc));
-    desc.Width = 1920;
-    desc.Height = 1080;
-    desc.MipLevels = 1;
-    desc.ArraySize = 1;
-    desc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
-    desc.SampleDesc.Count = 1;
-    desc.SampleDesc.Quality = 0;
-    desc.Usage = D3D11_USAGE_DEFAULT;
-    desc.BindFlags = 40;
-    desc.CPUAccessFlags = 0;
-    desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED;
 
-    // Create the intermediate texture
-    hr = pD3DDev->CreateTexture2D(&desc, nullptr, &pEncBuf);
-    // Copy pDupTex2D to pEncBuf
-    pCtx->CopyResource(pEncBuf, pDupTex2D);
+    // Write the mapped resource to the output file
+    SaveFrameToFile(mappedResource.pData, desc.Width, desc.Height);
 
+    pCtx->Unmap(pBuffer, 0);
     return hr;
 }
 
@@ -252,19 +114,159 @@ HRESULT CudaH264::InitDXGI()
         hr = D3D11CreateDevice(nullptr, DriverTypes[DriverTypeIndex], nullptr, /*D3D11_CREATE_DEVICE_DEBUG*/ 0, FeatureLevels, NumFeatureLevels,
                                D3D11_SDK_VERSION, &pD3DDev, &FeatureLevel, &pCtx);
         if (SUCCEEDED(hr))
-        {
-            // Device creation succeeded, no need to loop anymore
             break;
-        }
     }
     return hr;
+}
+
+HRESULT CudaH264::InitDup()
+{
+    HRESULT hr = S_OK;
+    if (!pDDAWrapper)
+    {
+        pDDAWrapper = new DDAImpl(pD3DDev, pCtx);
+        hr = pDDAWrapper->Init();
+        returnIfError(hr);
+    }
+
+    return hr;
+}
+
+HRESULT CudaH264::InitOutFile()
+{
+    if (!fpOut)
+    {
+        std::ostringstream err;
+        err << "Unable to open output file: out.bgra" << std::endl;
+        throw std::invalid_argument(err.str());
+    }
+    return S_OK;
+}
+HRESULT CudaH264::InitEnc()
+{
+    HRESULT hr = S_OK;
+    DWORD w = pDDAWrapper->getWidth();
+    DWORD h = pDDAWrapper->getHeight();
+
+    char szDeviceName[80];
+    cuDeviceGet(&cuDevice, iGpu);
+    cuDeviceGetName(szDeviceName, sizeof(szDeviceName), cuDevice);
+    std::cout << "GPU in use: " << szDeviceName << std::endl;
+    CUresult res = cuCtxCreate(&cuContext, 0, cuDevice);
+    if (cuContext == NULL)
+    {
+        std::ostringstream err;
+        std::cerr << res << std::endl;
+        err << "Unable to create CUDA context" << std::endl;
+        throw std::invalid_argument(err.str());
+    }
+    NV_ENC_BUFFER_FORMAT eFormat = NV_ENC_BUFFER_FORMAT_ARGB;
+    int iGpu = 0;
+    try
+    {
+        pEnc = new NvEncoderCuda(cuContext, w, h, eFormat); // TODO Error management
+    }
+    catch (std::exception &error)
+    {
+        std::cerr << error.what() << std::endl;
+    }
+
+    NV_ENC_INITIALIZE_PARAMS initializeParams = {NV_ENC_INITIALIZE_PARAMS_VER};
+    NV_ENC_CONFIG encodeConfig = {NV_ENC_CONFIG_VER};
+    ZeroMemory(&initializeParams, sizeof(initializeParams));
+    ZeroMemory(&encodeConfig, sizeof(encodeConfig));
+    initializeParams.encodeConfig = &encodeConfig;
+    initializeParams.encodeWidth = w;
+    initializeParams.encodeHeight = h;
+    pEnc->CreateDefaultEncoderParams(&initializeParams, NV_ENC_CODEC_H264_GUID, NV_ENC_PRESET_LOW_LATENCY_HP_GUID);
+
+    pEnc->CreateEncoder(&initializeParams);
+    return hr;
+}
+
+HRESULT CudaH264::Encode(CUarray_st *cuArray)
+{
+    HRESULT hr = S_OK;
+    const NvEncInputFrame *encoderInputFrame = pEnc->GetNextInputFrame();
+    NV_ENC_PIC_PARAMS encPicParams = {NV_ENC_PIC_PARAMS_VER};
+    // Copy the CUDA array to the encoder input frame
+    // Assume encoderInputFrame->inputPtr is a device pointer
+    CUDA_MEMCPY2D copyParam = {0};
+    copyParam.srcArray = cuArray;
+    copyParam.srcMemoryType = CU_MEMORYTYPE_ARRAY; // Use CU_MEMORYTYPE_ARRAY for src
+    copyParam.dstMemoryType = CU_MEMORYTYPE_DEVICE;
+    copyParam.dstDevice = (CUdeviceptr)encoderInputFrame->inputPtr;
+    copyParam.dstPitch = encoderInputFrame->pitch;
+    copyParam.WidthInBytes = pEnc->GetEncodeWidth() * 4; // BGRA: 4 bytes per pixel
+    copyParam.Height = pEnc->GetEncodeHeight();
+
+    CUresult cudaStatus = cuMemcpy2D(&copyParam);
+    if (cudaStatus != CUDA_SUCCESS)
+    {
+        std::cerr << "Failed to copy CUDA array to device memory. : cudaError : " << cudaStatus << std::endl;
+        return E_FAIL;
+    }
+    try
+    {
+        pEnc->EncodeFrame(vPacket);
+        WriteEncOutput();
+    }
+    catch (...)
+    {
+        hr = E_FAIL;
+    }
+    return hr;
+}
+
+void CudaH264::Cleanup(bool bDelete)
+{
+    if (pDDAWrapper)
+    {
+        pDDAWrapper->Cleanup();
+        delete pDDAWrapper;
+        pDDAWrapper = nullptr;
+    }
+    SAFE_RELEASE(pDupTex2D);
+    if (bDelete)
+    {
+        if (pEnc)
+        {
+            pEnc->EndEncode(vPacket);
+            WriteEncOutput();
+            pEncBuf->Release();
+            pEnc->DestroyEncoder();
+            ZeroMemory(&initializeParams, sizeof(NV_ENC_INITIALIZE_PARAMS));
+            ZeroMemory(&encodeConfig, sizeof(NV_ENC_CONFIG));
+        }
+        SAFE_RELEASE(pEncBuf);
+        SAFE_RELEASE(pCtx);
+    }
+}
+
+HRESULT CudaH264::Capture(int wait)
+{
+    HRESULT hr = pDDAWrapper->GetCapturedFrame(&pDupTex2D, wait);
+    pEncBuf = nullptr;
+    if (FAILED(hr))
+        failCount++;
+
+    if (pDupTex2D)
+    {
+        D3D11_TEXTURE2D_DESC targetDesc;
+        ZeroMemory(&targetDesc, sizeof(targetDesc));
+        pDupTex2D->GetDesc(&targetDesc);
+        targetDesc.MiscFlags = 0;
+        hr = pD3DDev->CreateTexture2D(&targetDesc, nullptr, &pEncBuf);
+        // copy pduptex2D to pEncBuf
+        pCtx->CopyResource(pEncBuf, pDupTex2D); // pour copier pDupTex2D dans pEncBuf
+    }
+        return hr;
+
 }
 
 /// Write encoded video output to file
 void CudaH264::WriteEncOutput()
 {
-    int nFrame = 0;
-    nFrame = (int)vPacket.size();
     for (std::vector<uint8_t> &packet : vPacket)
     {
         fpOut.write(reinterpret_cast<char *>(packet.data()), packet.size());
@@ -275,13 +277,15 @@ HRESULT CudaH264::Preproc()
 {
     HRESULT hr = S_OK;
     size_t size;
+
     CUgraphicsResource cuResource;
     CUstream stream = 0;
     CUresult cudaStatus = CUDA_SUCCESS;
-    CUarray_st* cuArray = nullptr;
-        // Create CUDA stream
+    CUarray_st *cuArray = nullptr;
+    // Create CUDA stream
     cudaStatus = cuStreamCreate(&stream, CU_STREAM_DEFAULT);
-    if (cudaStatus != CUDA_SUCCESS) {
+    if (cudaStatus != CUDA_SUCCESS)
+    {
         std::cerr << "Failed to create CUDA stream. Error code: " << cudaStatus << std::endl;
         return E_FAIL;
     }
@@ -295,23 +299,25 @@ HRESULT CudaH264::Preproc()
 
     // Map the resource for access by CUDA
     cudaStatus = cuGraphicsMapResources(1, &cuResource, stream);
-    if (cudaStatus != CUDA_SUCCESS) {
+    if (cudaStatus != CUDA_SUCCESS)
+    {
         std::cerr << "Failed to map D3D11 resource to CUDA. Error code: " << cudaStatus << std::endl;
-        cuGraphicsUnregisterResource(cuResource);  // Cleanup before exit
+        cuGraphicsUnregisterResource(cuResource); // Cleanup before exit
         return E_FAIL;
     }
 
     // Get the CUDA array from the D3D11 resource
     unsigned int subResourceIndex = 0; // Typically 0 for the first subresource
     CUresult result = cuGraphicsSubResourceGetMappedArray(&cuArray, cuResource, subResourceIndex, 0);
-    if (result != CUDA_SUCCESS) {
+    if (result != CUDA_SUCCESS)
+    {
         // Handle error
         std::cerr << "Failed to get CUDA array from D3D11 resource. : cudaError : " << result << std::endl;
     }
-
     Encode(cuArray);
     cudaStatus = cuGraphicsUnmapResources(1, &cuResource, stream);
-    if (cudaStatus != CUDA_SUCCESS) {
+    if (cudaStatus != CUDA_SUCCESS)
+    {
         std::cerr << "Failed to unmap D3D11 resource from CUDA. Error code: " << cudaStatus << std::endl;
         return E_FAIL;
     }

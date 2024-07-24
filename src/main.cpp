@@ -26,32 +26,58 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "Defs.h"
-#include "Preproc.h"
+#include "Defs.hpp"
+#include "Preproc.hpp"
 #include "CudaH264.hpp"
 #include <memory>
 
 /// Demo 60 FPS (approx.) capture
-int Grab60FPS(int nFrames, int argc,char *argv[])
+int Grab60FPS(int nFrames, int argc, char *argv[])
 {
     std::unique_ptr<CudaH264> Cudah264 = std::make_unique<CudaH264>(argc, argv);
-    const int WAIT_BASE = 17;
+    const int WAIT_BASE = 8; // 8 ms = 100 FPS
     HRESULT hr = S_OK;
     int capturedFrames = 0;
-    LARGE_INTEGER start = { 0 };
-    LARGE_INTEGER end = { 0 };
-    LARGE_INTEGER interval = { 0 };
-    LARGE_INTEGER freq = { 0 };
+    // for the capture time
+    LARGE_INTEGER start = {0};
+    LARGE_INTEGER end = {0};
+    LARGE_INTEGER interval = {0};
+    LARGE_INTEGER freq = {0};
     int wait = WAIT_BASE;
+
+    // for the preproc time
+    // to delete later :
+    LARGE_INTEGER START = {0};
+    LARGE_INTEGER END = {0};
+    LARGE_INTEGER INTERVAL = {0};
+    int wait2 = WAIT_BASE;
+    //
 
     QueryPerformanceFrequency(&freq);
 
     /// Reset waiting time for the next screen capture attempt
-#define RESET_WAIT_TIME(start, end, interval, freq)         \
-    QueryPerformanceCounter(&end);                          \
-    interval.QuadPart = end.QuadPart - start.QuadPart;      \
-    MICROSEC_TIME(interval, freq);                          \
-    wait = (int)(WAIT_BASE - (interval.QuadPart * 1000));
+#define RESET_WAIT_TIME(start, end, interval, freq)                                 \
+    QueryPerformanceCounter(&end);                                                  \
+    interval.QuadPart = end.QuadPart - start.QuadPart;                              \
+    MICROSEC_TIME(interval, freq);                                                  \
+    wait = (int)((WAIT_BASE) - (interval.QuadPart / 1000));                         \
+    if (wait < 0) wait = 0;                                                                 \
+    // std::cout << "Interval: " << interval.QuadPart << " microseconds" << std::endl; \
+    // std::cout << "Start Time: " << start.QuadPart << " ticks" << std::endl;         \
+    // std::cout << "End Time: " << end.QuadPart << " ticks" << std::endl;             \
+    // std::cout << "Wait Time: " << wait << " millisecconds" << std::endl;            \
+    // std::cout << "Wait Time in Microseconds: " << (int)((WAIT_BASE * 1000) - (interval.QuadPart)) << " microseconds" << std::endl;
+
+#define RESET_WAIT_TIME2(START, END, INTERVAL, freq)                                \
+    QueryPerformanceCounter(&END);                                                  \
+    INTERVAL.QuadPart = END.QuadPart - START.QuadPart;                              \
+    MICROSEC_TIME(INTERVAL, freq);                                                  \
+    wait2 = (int)((WAIT_BASE) - (INTERVAL.QuadPart / 1000));                        \
+    // std::cout << "Interval: " << INTERVAL.QuadPart << " microseconds" << std::endl; \
+    // std::cout << "Start Time: " << START.QuadPart << " ticks" << std::endl;         \
+    // std::cout << "End Time: " << END.QuadPart << " ticks" << std::endl;             \
+    // std::cout << "Wait Time: " << wait2 << " millisecconds" << std::endl;           \
+    // std::cout << "Wait Time in Microseconds: " << (int)((WAIT_BASE * 1000) - (INTERVAL.QuadPart)) << " microseconds" << std::endl;
 
     /// Initialize Cudah264 app
     hr = Cudah264->Init();
@@ -64,12 +90,15 @@ int Grab60FPS(int nFrames, int argc,char *argv[])
     /// Run capture loop
     do
     {
-        /// get start timestamp. 
+        /// get start timestamp.
         /// use this to adjust the waiting period in each capture attempt to approximately attempt 60 captures in a second
         QueryPerformanceCounter(&start);
         /// Get a frame from DDA
         hr = Cudah264->Capture(wait);
-        if (hr == DXGI_ERROR_WAIT_TIMEOUT) 
+        RESET_WAIT_TIME(start, end, interval, freq);
+        std::cout << " ---- capture took " << interval.QuadPart / 1000 << " milliseconds" << std::endl;
+
+        if (hr == DXGI_ERROR_WAIT_TIMEOUT)
         {
             /// retry if there was no new update to the screen during our specific timeout interval
             /// reset our waiting time
@@ -81,7 +110,7 @@ int Grab60FPS(int nFrames, int argc,char *argv[])
             if (FAILED(hr))
             {
                 /// Re-try with a new DDA object
-                printf("Captrue failed with error 0x%08x. Re-create DDA and try again.\n", hr);
+                printf("Capture failed with error 0x%08x. Re-create DDA and try again.\n", hr);
                 Cudah264->Cleanup(true);
                 hr = Cudah264->Init();
                 if (FAILED(hr))
@@ -93,25 +122,20 @@ int Grab60FPS(int nFrames, int argc,char *argv[])
                 RESET_WAIT_TIME(start, end, interval, freq);
                 QueryPerformanceCounter(&start);
                 /// Get a frame from DDA
-                Cudah264->Capture(wait);
+                Cudah264->Capture(wait); // - 1 ms
             }
-            RESET_WAIT_TIME(start, end, interval, freq);
-            /// Preprocess for encoding
-            hr = Cudah264->Preproc(); 
+            QueryPerformanceCounter(&START);
+            hr = Cudah264->Preproc(); // Encode 1 frame full HD = 2-3 ms // result 1-3 ms
+            RESET_WAIT_TIME2(START, END, INTERVAL, freq);
+            std::cout << " ______ Preproc took " << INTERVAL.QuadPart / 1000 << " milliseconds" << std::endl;
+            std::cout << "///////////////////////////////////// " << std::endl;
             if (FAILED(hr))
             {
                 printf("Preproc failed with error 0x%08x\n", hr);
                 return -1;
             }
-
-
-//            hr = Cudah264->Encode();
-//            if (FAILED(hr))
-//            {
-//                printf("Encode failed with error 0x%08x\n", hr);
-//                return -1;
-//            }
             capturedFrames++;
+            // Total = 8 ms max
         }
     } while (capturedFrames <= nFrames);
 
@@ -121,11 +145,11 @@ int Grab60FPS(int nFrames, int argc,char *argv[])
 int main(int argc, char *argv[])
 {
     /// The app will try to capture 20 times, by default
-    int nFrames = 60;
+    int nFrames = 20;
     int ret = 0;
     bool useNvenc = true;
 
-/// Kick off the demo
+    /// Kick off the demo
     ret = Grab60FPS(nFrames, argc, argv);
     return ret;
 }
