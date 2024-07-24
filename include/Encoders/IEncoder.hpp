@@ -1,5 +1,5 @@
 #pragma once
-#include "Defs.h"
+#include "Defs.hpp"
 #include "NvEncoder/NvEncoderCuda.h"
 class IEncoder
 {

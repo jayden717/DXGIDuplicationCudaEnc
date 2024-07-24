@@ -2,10 +2,9 @@
 
 #include "IEncoder.hpp"
 #include <memory>
-#include "DDAImpl.h"
+#include "DDAImpl.hpp"
 #include "NvEncoder/NvEncoderCuda.h"
 #include "NvEncoder/NvEncoderD3D11.h"
-
 
 class CudaH264 : public IEncoder
 {
@@ -35,11 +34,13 @@ private:
 
     /// D3D11 RGB Texture2D object that recieves the captured image from DDA
     ID3D11Texture2D *pDupTex2D = nullptr;
-//    /// D3D11 YUV420 Texture2D object that sends the image to NVENC for video encoding
-//    ID3D11Texture2D *pEncBuf = nullptr;
+    /// D3D11 RGB Texture2D object that has the correct rights to send the image to NVENCCUDA for mapping and video encoding
+    ID3D11Texture2D *pEncBuf = nullptr;
+    /// pEncBuf Description
+
+
     /// D3D11 device context
     ID3D11DeviceContext *pCtx = nullptr;
-    ID3D11Texture2D *pEncBuf = nullptr;
 
     /// Encoded video bitstream packet in CPU memory
     std::vector<std::vector<uint8_t>> vPacket;
@@ -59,9 +60,9 @@ public:
     explicit CudaH264(int argc, char *_argv[]);
     ~CudaH264() override;
     HRESULT InitEnc() override;
-    HRESULT Encode(){}
+    HRESULT Encode() { return (S_OK); }
     HRESULT Encode(CUarray_st *cuArray);
-    
+    HRESULT WriteRawFrame(ID3D11Texture2D *pBuffer);
     void Cleanup(bool bDelete) override;
 
     // Desktop duplication
@@ -84,11 +85,7 @@ public:
     /// Preprocess captured frame
     HRESULT Preproc();
 
-//    void ParseCommandLine(int argc, char *argv[], int &nWidth, int &nHeight,
-//    NV_ENC_BUFFER_FORMAT &eFormat, char *szOutputFileName, NvEncoderInitParam &initParam, int &iGpu);
     void WriteEncOutput();
 
     HRESULT SaveFrameToFile(const void* pBuffer, int width, int height);
 };
-
-
