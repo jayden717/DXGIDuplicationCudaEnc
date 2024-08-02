@@ -246,22 +246,24 @@ void CudaH264::Cleanup(bool bDelete)
 HRESULT CudaH264::Capture(int wait)
 {
     HRESULT hr = pDDAWrapper->GetCapturedFrame(&pDupTex2D, wait);
-    pEncBuf = nullptr;
     if (FAILED(hr))
         failCount++;
 
-    if (pDupTex2D)
-    {
-        D3D11_TEXTURE2D_DESC targetDesc;
-        ZeroMemory(&targetDesc, sizeof(targetDesc));
-        pDupTex2D->GetDesc(&targetDesc);
-        targetDesc.MiscFlags = 0;
-        hr = pD3DDev->CreateTexture2D(&targetDesc, nullptr, &pEncBuf);
-        // copy pduptex2D to pEncBuf
-        pCtx->CopyResource(pEncBuf, pDupTex2D); // pour copier pDupTex2D dans pEncBuf
-    }
-        return hr;
+	if (!pEncBuf && pDupTex2D) {
+		D3D11_TEXTURE2D_DESC targetDesc;
+		ZeroMemory(&targetDesc, sizeof(targetDesc));
+		pDupTex2D->GetDesc(&targetDesc);
+		targetDesc.MiscFlags = 0;
+		hr = pD3DDev->CreateTexture2D(&targetDesc, nullptr, &pEncBuf);
+	}
 
+    if (pDupTex2D)
+	{
+		// copy pduptex2D to pEncBuf
+		pCtx->CopyResource(pEncBuf, pDupTex2D); // pour copier pDupTex2D dans pEncBuf
+	}
+
+	return hr;
 }
 
 /// Write encoded video output to file
@@ -278,24 +280,31 @@ HRESULT CudaH264::Preproc()
     HRESULT hr = S_OK;
     size_t size;
 
-    CUgraphicsResource cuResource;
-    CUstream stream = 0;
-    CUresult cudaStatus = CUDA_SUCCESS;
-    CUarray_st *cuArray = nullptr;
-    // Create CUDA stream
-    cudaStatus = cuStreamCreate(&stream, CU_STREAM_DEFAULT);
-    if (cudaStatus != CUDA_SUCCESS)
-    {
-        std::cerr << "Failed to create CUDA stream. Error code: " << cudaStatus << std::endl;
-        return E_FAIL;
-    }
+    static bool isFirst = true;
 
-    cudaStatus = cuGraphicsD3D11RegisterResource(&cuResource, pEncBuf, CU_GRAPHICS_REGISTER_FLAGS_NONE);
-    if (cudaStatus != CUDA_SUCCESS)
-    {
-        std::cerr << "Failed to register D3D11 resource with CUDA. : cudaError : " << cudaStatus << std::endl;
-        return E_FAIL;
-    }
+    static CUgraphicsResource cuResource;
+    static CUstream stream = 0;
+    static CUarray_st *cuArray = nullptr;
+
+    CUresult cudaStatus = CUDA_SUCCESS;
+
+	if (isFirst) {
+		isFirst = false;
+		// Create CUDA stream
+		cudaStatus = cuStreamCreate(&stream, CU_STREAM_DEFAULT);
+		if (cudaStatus != CUDA_SUCCESS)
+		{
+			std::cerr << "Failed to create CUDA stream. Error code: " << cudaStatus << std::endl;
+			return E_FAIL;
+		}
+
+		cudaStatus = cuGraphicsD3D11RegisterResource(&cuResource, pEncBuf, CU_GRAPHICS_REGISTER_FLAGS_NONE);
+		if (cudaStatus != CUDA_SUCCESS)
+		{
+			std::cerr << "Failed to register D3D11 resource with CUDA. : cudaError : " << cudaStatus << std::endl;
+			return E_FAIL;
+		}
+	}
 
     // Map the resource for access by CUDA
     cudaStatus = cuGraphicsMapResources(1, &cuResource, stream);
