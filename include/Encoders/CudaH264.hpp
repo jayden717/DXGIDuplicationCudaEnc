@@ -5,6 +5,7 @@
 #include "DDAImpl.hpp"
 #include "NvEncoder/NvEncoderCuda.h"
 #include "NvEncoder/NvEncoderD3D11.h"
+#include "D3D11TextureConverter.h"
 
 class CudaH264 : public IEncoder
 {
@@ -34,9 +35,10 @@ private:
 
     /// D3D11 RGB Texture2D object that recieves the captured image from DDA
     ID3D11Texture2D *pDupTex2D = nullptr;
+
     /// D3D11 RGB Texture2D object that has the correct rights to send the image to NVENCCUDA for mapping and video encoding
-    ID3D11Texture2D *pEncBuf = nullptr;
-    /// pEncBuf Description
+    ID3D11Texture2D *m_pEncBuf = nullptr;
+    /// m_pEncBuf Description
 
 
     /// D3D11 device context
@@ -55,6 +57,8 @@ private:
     UINT failCount = 0;
     char **argv;
     int argc;
+
+    std::unique_ptr<D3D11TextureConverter> m_textureConverter;
 
 public:
     explicit CudaH264(int argc, char *_argv[]);

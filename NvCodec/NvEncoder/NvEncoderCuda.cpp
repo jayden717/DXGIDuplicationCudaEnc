@@ -1,34 +1,36 @@
 /*
-* Copyright 2017-2018 NVIDIA Corporation.  All rights reserved.
-*
-* Please refer to the NVIDIA end user license agreement (EULA) associated
-* with this source code for terms and conditions that govern your use of
-* this software. Any use, reproduction, disclosure, or distribution of
-* this software and related documentation outside the terms of the EULA
-* is strictly prohibited.
-*
-*/
+ * This copyright notice applies to this header file only:
+ *
+ * Copyright (c) 2010-2024 NVIDIA Corporation
+ *
+ * Permission is hereby granted, free of charge, to any person
+ * obtaining a copy of this software and associated documentation
+ * files (the "Software"), to deal in the Software without
+ * restriction, including without limitation the rights to use,
+ * copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the software, and to permit persons to whom the
+ * software is furnished to do so, subject to the following
+ * conditions:
+ *
+ * The above copyright notice and this permission notice shall be
+ * included in all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+ * OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+ * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+ * HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+ * WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+ * OTHER DEALINGS IN THE SOFTWARE.
+ */
 
 #include "NvEncoder/NvEncoderCuda.h"
 
-#define CUDA_DRVAPI_CALL( call )                                                                                                 \
-    do                                                                                                                           \
-    {                                                                                                                            \
-        CUresult err__ = call;                                                                                                   \
-        if (err__ != CUDA_SUCCESS)                                                                                               \
-        {                                                                                                                        \
-            const char *szErrName = NULL;                                                                                        \
-            cuGetErrorName(err__, &szErrName);                                                                                   \
-            std::ostringstream errorLog;                                                                                         \
-            errorLog << "CUDA driver API error " << szErrName ;                                                                  \
-            throw NVENCException::makeNVENCException(errorLog.str(), NV_ENC_ERR_GENERIC, __FUNCTION__, __FILE__, __LINE__);      \
-        }                                                                                                                        \
-    }                                                                                                                            \
-    while (0)
 
 NvEncoderCuda::NvEncoderCuda(CUcontext cuContext, uint32_t nWidth, uint32_t nHeight, NV_ENC_BUFFER_FORMAT eBufferFormat,
-    uint32_t nExtraOutputDelay, bool bMotionEstimationOnly):
-    NvEncoder(NV_ENC_DEVICE_TYPE_CUDA, cuContext, nWidth, nHeight, eBufferFormat, nExtraOutputDelay, bMotionEstimationOnly),
+    uint32_t nExtraOutputDelay, bool bMotionEstimationOnly, bool bOutputInVideoMemory, bool bUseIVFContainer):
+    NvEncoder(NV_ENC_DEVICE_TYPE_CUDA, cuContext, nWidth, nHeight, eBufferFormat, nExtraOutputDelay, bMotionEstimationOnly, bOutputInVideoMemory, false, bUseIVFContainer),
     m_cuContext(cuContext)
 {
     if (!m_hEncoder) 
@@ -75,7 +77,7 @@ void NvEncoderCuda::AllocateInputBuffers(int32_t numInputBuffers)
         }
         CUDA_DRVAPI_CALL(cuCtxPopCurrent(NULL));
 
-        RegisterResources(inputFrames,
+        RegisterInputResources(inputFrames,
             NV_ENC_INPUT_RESOURCE_TYPE_CUDADEVICEPTR,
             GetMaxEncodeWidth(),
             GetMaxEncodeHeight(),
@@ -83,6 +85,11 @@ void NvEncoderCuda::AllocateInputBuffers(int32_t numInputBuffers)
             GetPixelFormat(),
             (count == 1) ? true : false);
     }
+}
+
+void NvEncoderCuda::SetIOCudaStreams(NV_ENC_CUSTREAM_PTR inputStream, NV_ENC_CUSTREAM_PTR outputStream)
+{
+    NVENC_API_CALL(m_nvenc.nvEncSetIOCudaStreams(m_hEncoder, inputStream, outputStream));
 }
 
 void NvEncoderCuda::ReleaseInputBuffers()
@@ -102,7 +109,7 @@ void NvEncoderCuda::ReleaseCudaResources()
         return;
     }
 
-    UnregisterResources();
+    UnregisterInputResources();
 
     cuCtxPushCurrent(m_cuContext);
 
@@ -139,7 +146,8 @@ void NvEncoderCuda::CopyToDeviceFrame(CUcontext device,
     NV_ENC_BUFFER_FORMAT pixelFormat,
     const uint32_t dstChromaOffsets[],
     uint32_t numChromaPlanes,
-    bool bUnAlignedDeviceCopy)
+    bool bUnAlignedDeviceCopy,
+    CUstream stream)
 {
     if (srcMemoryType != CU_MEMORYTYPE_HOST && srcMemoryType != CU_MEMORYTYPE_DEVICE)
     {
@@ -171,7 +179,7 @@ void NvEncoderCuda::CopyToDeviceFrame(CUcontext device,
     }
     else
     {
-        CUDA_DRVAPI_CALL(cuMemcpy2D(&m));
+        CUDA_DRVAPI_CALL(stream == NULL? cuMemcpy2D(&m) : cuMemcpy2DAsync(&m, stream));
     }
 
     std::vector<uint32_t> srcChromaOffsets;
@@ -205,7 +213,7 @@ void NvEncoderCuda::CopyToDeviceFrame(CUcontext device,
             }
             else
             {
-                CUDA_DRVAPI_CALL(cuMemcpy2D(&m));
+                CUDA_DRVAPI_CALL(stream == NULL? cuMemcpy2D(&m) : cuMemcpy2DAsync(&m, stream));
             }
         }
     }

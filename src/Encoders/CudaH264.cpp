@@ -6,6 +6,8 @@
 #include <fstream>
 #include <winnt.h>
 
+#include <cuda_runtime_api.h>
+
 CudaH264::CudaH264(int _argc, char *_argv[])
 try : argc(_argc), argv(_argv), fpOut("out.h264", std::ios::out | std::ios::binary), iGpu(0)
 {
@@ -161,6 +163,7 @@ HRESULT CudaH264::InitEnc()
         throw std::invalid_argument(err.str());
     }
     NV_ENC_BUFFER_FORMAT eFormat = NV_ENC_BUFFER_FORMAT_ARGB;
+    //NV_ENC_BUFFER_FORMAT eFormat = NV_ENC_BUFFER_FORMAT_NV12;
     int iGpu = 0;
     try
     {
@@ -178,9 +181,14 @@ HRESULT CudaH264::InitEnc()
     initializeParams.encodeConfig = &encodeConfig;
     initializeParams.encodeWidth = w;
     initializeParams.encodeHeight = h;
-    pEnc->CreateDefaultEncoderParams(&initializeParams, NV_ENC_CODEC_H264_GUID, NV_ENC_PRESET_LOW_LATENCY_HP_GUID);
+    NV_ENC_TUNING_INFO tuningInfo = NV_ENC_TUNING_INFO_ULTRA_LOW_LATENCY;
+    pEnc->CreateDefaultEncoderParams(&initializeParams, NV_ENC_CODEC_H264_GUID, NV_ENC_PRESET_P3_GUID, tuningInfo);
 
     pEnc->CreateEncoder(&initializeParams);
+
+    m_textureConverter = std::make_unique<D3D11TextureConverter>(pD3DDev, pCtx);
+    m_textureConverter->init();
+
     return hr;
 }
 
@@ -188,9 +196,18 @@ HRESULT CudaH264::Encode(CUarray_st *cuArray)
 {
     HRESULT hr = S_OK;
     const NvEncInputFrame *encoderInputFrame = pEnc->GetNextInputFrame();
+
+    CUarray inputArray = (CUarray)encoderInputFrame;
+    CUDA_ARRAY_DESCRIPTOR desc;
+    memset((void*)&desc, 0, sizeof(CUDA_ARRAY_DESCRIPTOR));
+    CUresult cuErr = cuArrayGetDescriptor(&desc, cuArray);
+
     NV_ENC_PIC_PARAMS encPicParams = {NV_ENC_PIC_PARAMS_VER};
     // Copy the CUDA array to the encoder input frame
     // Assume encoderInputFrame->inputPtr is a device pointer
+
+
+#if 1
     CUDA_MEMCPY2D copyParam = {0};
     copyParam.srcArray = cuArray;
     copyParam.srcMemoryType = CU_MEMORYTYPE_ARRAY; // Use CU_MEMORYTYPE_ARRAY for src
@@ -199,6 +216,27 @@ HRESULT CudaH264::Encode(CUarray_st *cuArray)
     copyParam.dstPitch = encoderInputFrame->pitch;
     copyParam.WidthInBytes = pEnc->GetEncodeWidth() * 4; // BGRA: 4 bytes per pixel
     copyParam.Height = pEnc->GetEncodeHeight();
+#else
+
+    memset((void*)&desc, 0, sizeof(CUDA_ARRAY_DESCRIPTOR));
+    cuErr = cuArrayGetDescriptor(&desc, cuArray);
+
+    //cuMemcpyAtoA(inputArray, 0, cuArray, 0, pEnc->GetEncodeWidth() * pEnc->GetEncodeWidth() * 3 / 2 );
+
+    auto cudaRes = cudaMemcpy2DToArray((cudaArray_t)inputArray, 0, 0, (cudaArray_t)cuArray, encoderInputFrame->pitch, pEnc->GetEncodeWidth(), pEnc->GetEncodeWidth(), cudaMemcpyDeviceToDevice);
+
+    //cudaError_t e = cudaMemcpy2DArrayToArray((cudaArray_t)inputArray, 0, 0, (cudaArray_t)cuArray, 0, 0, pEnc->GetEncodeWidth(), pEnc->GetEncodeWidth(), cudaMemcpyDeviceToDevice);
+
+    CUDA_MEMCPY2D copyParam = { 0 };
+    copyParam.srcArray = cuArray;
+    copyParam.srcMemoryType = CU_MEMORYTYPE_ARRAY;
+    copyParam.dstMemoryType = CU_MEMORYTYPE_ARRAY;
+    copyParam.dstArray = inputArray;
+    copyParam.dstPitch = encoderInputFrame->pitch;
+    copyParam.WidthInBytes = pEnc->GetEncodeWidth();
+    copyParam.Height = pEnc->GetEncodeHeight() * 3 / 2;
+#endif
+   
 
     CUresult cudaStatus = cuMemcpy2D(&copyParam);
     if (cudaStatus != CUDA_SUCCESS)
@@ -233,14 +271,19 @@ void CudaH264::Cleanup(bool bDelete)
         {
             pEnc->EndEncode(vPacket);
             WriteEncOutput();
-            pEncBuf->Release();
+            m_pEncBuf->Release();
             pEnc->DestroyEncoder();
             ZeroMemory(&initializeParams, sizeof(NV_ENC_INITIALIZE_PARAMS));
             ZeroMemory(&encodeConfig, sizeof(NV_ENC_CONFIG));
         }
-        SAFE_RELEASE(pEncBuf);
+        SAFE_RELEASE(m_pEncBuf);
         SAFE_RELEASE(pCtx);
     }
+
+	if (m_textureConverter) {
+		m_textureConverter->cleanup();
+        m_textureConverter.reset();
+	}
 }
 
 HRESULT CudaH264::Capture(int wait)
@@ -249,18 +292,23 @@ HRESULT CudaH264::Capture(int wait)
     if (FAILED(hr))
         failCount++;
 
-	if (!pEncBuf && pDupTex2D) {
+	if (!m_pEncBuf && pDupTex2D) {
+
 		D3D11_TEXTURE2D_DESC targetDesc;
 		ZeroMemory(&targetDesc, sizeof(targetDesc));
 		pDupTex2D->GetDesc(&targetDesc);
 		targetDesc.MiscFlags = 0;
-		hr = pD3DDev->CreateTexture2D(&targetDesc, nullptr, &pEncBuf);
+        //targetDesc.Format = DXGI_FORMAT_NV12;
+
+		hr = pD3DDev->CreateTexture2D(&targetDesc, nullptr, &m_pEncBuf);
 	}
 
-    if (pDupTex2D)
+    if (pDupTex2D && m_textureConverter)
 	{
-		// copy pduptex2D to pEncBuf
-		pCtx->CopyResource(pEncBuf, pDupTex2D); // pour copier pDupTex2D dans pEncBuf
+		// copy pduptex2D to m_pEncBuf
+		pCtx->CopyResource(m_pEncBuf, pDupTex2D); // pour copier pDupTex2D dans m_pEncBuf
+
+        //m_textureConverter->convert(pDupTex2D, m_pEncBuf);
 	}
 
 	return hr;
@@ -298,7 +346,10 @@ HRESULT CudaH264::Preproc()
 			return E_FAIL;
 		}
 
-		cudaStatus = cuGraphicsD3D11RegisterResource(&cuResource, pEncBuf, CU_GRAPHICS_REGISTER_FLAGS_NONE);
+        
+        D3D11_TEXTURE2D_DESC desc;
+        m_pEncBuf->GetDesc(&desc);
+		cudaStatus = cuGraphicsD3D11RegisterResource(&cuResource, m_pEncBuf, CU_GRAPHICS_REGISTER_FLAGS_NONE);
 		if (cudaStatus != CUDA_SUCCESS)
 		{
 			std::cerr << "Failed to register D3D11 resource with CUDA. : cudaError : " << cudaStatus << std::endl;
