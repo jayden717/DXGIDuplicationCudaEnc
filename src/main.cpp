@@ -29,12 +29,14 @@
 #include "Defs.hpp"
 #include "Preproc.hpp"
 #include "CudaH264.hpp"
+#include "CudaH264Array.hpp"
 #include <memory>
 
 /// Demo 60 FPS (approx.) capture
 int Grab60FPS(int nFrames, int argc, char *argv[])
 {
-    std::unique_ptr<CudaH264> Cudah264 = std::make_unique<CudaH264>(argc, argv);
+    //std::unique_ptr<CudaH264> Cudah264 = std::make_unique<CudaH264>(argc, argv);
+    std::unique_ptr<CudaH264Array> Cudah264 = std::make_unique<CudaH264Array>(argc, argv);
     const int WAIT_BASE = 17; // 8 ms = 100 FPS
     HRESULT hr = S_OK;
     int capturedFrames = 0;
@@ -145,7 +147,7 @@ int Grab60FPS(int nFrames, int argc, char *argv[])
 int main(int argc, char *argv[])
 {
     /// The app will try to capture 20 times, by default
-    int nFrames = 1200;
+    int nFrames = 120;
     int ret = 0;
     bool useNvenc = true;
 
