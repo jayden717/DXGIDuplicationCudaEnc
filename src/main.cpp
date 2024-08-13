@@ -35,8 +35,8 @@
 /// Demo 60 FPS (approx.) capture
 int Grab60FPS(int nFrames, int argc, char *argv[])
 {
-    std::unique_ptr<CudaH264> Cudah264 = std::make_unique<CudaH264>(argc, argv);
-    //std::unique_ptr<CudaH264Array> Cudah264 = std::make_unique<CudaH264Array>(argc, argv);
+    //std::unique_ptr<CudaH264> Cudah264 = std::make_unique<CudaH264>(argc, argv);
+    std::unique_ptr<CudaH264Array> Cudah264 = std::make_unique<CudaH264Array>(argc, argv);
     const int WAIT_BASE = 17; // 8 ms = 100 FPS
     HRESULT hr = S_OK;
     int capturedFrames = 0;

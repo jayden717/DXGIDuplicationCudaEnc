@@ -26,8 +26,8 @@ private:
 
     /// NVENCODE API wrapper. Defined in NvEncoderCuda.h. This class is imported from NVIDIA Video SDK
     //NvEnc *pEnc;
-    //NvEncoderCuda *pEnc;
-    NvEncoderD3D11 *pEnc;
+    NvEncoderCuda *pEnc;
+    //NvEncoderD3D11 *pEnc;
     /// D3D11 device context used for the operations demonstrated in this application
     ID3D11Device *pD3DDev = nullptr;
     CUdeviceptr dptr;

@@ -168,8 +168,8 @@ HRESULT CudaH264Array::InitEnc()
     try
     {
         //pEnc = new NvEnc(cuContext, w, h, eFormat); // TODO Error management
-        //pEnc = new NvEncoderCuda(cuContext, w, h, m_pixelFormat); // TODO Error management
-        pEnc = new NvEncoderD3D11(pD3DDev, w, h, m_pixelFormat); // TODO Error management
+        pEnc = new NvEncoderCuda(cuContext, w, h, m_pixelFormat); // TODO Error management
+        //pEnc = new NvEncoderD3D11(pD3DDev, w, h, m_pixelFormat); // TODO Error management
     }
     catch (std::exception &error)
     {
@@ -230,28 +230,8 @@ HRESULT CudaH264Array::Encode(CUarray cuArray)
     // Copy the CUDA array to the encoder input frame
     // Assume encoderInputFrame->inputPtr is a device pointer
 
-
-#if 1
     CUDA_MEMCPY2D copyParam;
     memset(&copyParam, 0, sizeof(CUDA_MEMCPY2D));
-
-    /*copyParam.srcXInBytes = 0;
-    copyParam.srcY = 0;
-    copyParam.srcMemoryType = CU_MEMORYTYPE_ARRAY;
-    copyParam.srcHost = 0;
-    copyParam.srcArray = cuArray;
-    copyParam.srcPitch = desc.Width;
-
-    copyParam.dstXInBytes = 0;
-    copyParam.dstY = 0;
-    copyParam.dstMemoryType = CU_MEMORYTYPE_DEVICE;
-    copyParam.dstHost = 0;
-    copyParam.dstDevice = (CUdeviceptr)encoderInputFrame->inputPtr;
-    copyParam.dstArray = 0;
-    copyParam.dstPitch = encoderInputFrame->pitch;
-
-    copyParam.WidthInBytes = desc.Width;
-    copyParam.Height = (desc.Height * 3) >> 1;*/
 
     uint32_t srcPitch = NvEncoder::GetWidthInBytes(m_pixelFormat, desc.Width);
     std::vector<uint32_t> srcChromaOffsets;
@@ -278,59 +258,27 @@ HRESULT CudaH264Array::Encode(CUarray cuArray)
 		std::cerr << "Failed to copy CUDA array to device memory. : cudaError : " << cudaStatus << std::endl;
 	}
 
-	//copyParam.srcMemoryType = CU_MEMORYTYPE_ARRAY;
- //   copyParam.srcArray = cuArray;
- //   copyParam.srcPitch = desc.Width;
- //   copyParam.srcY = desc.Height;
- //   copyParam.dstMemoryType = CU_MEMORYTYPE_DEVICE;
- //   copyParam.dstDevice = (CUdeviceptr)((uint8_t*)encoderInputFrame->inputPtr + encoderInputFrame->chromaOffsets[0]);
- //   copyParam.dstPitch = encoderInputFrame->pitch;
- //   copyParam.dstY = desc.Height;
-	//copyParam.WidthInBytes = desc.Width * desc.NumChannels;
-	//copyParam.Height = desc.Height * 0.5;
-	//cudaStatus = cuMemcpy2D(&copyParam);
+    for (uint32_t i = 0; i < encoderInputFrame->numChromaPlanes; ++i)
+    {
+        if (chromaHeight)
+		{
+			memset(&copyParam, 0, sizeof(CUDA_MEMCPY2D));
+			//copyParam.srcY = desc.Height;
+			copyParam.srcMemoryType = CU_MEMORYTYPE_ARRAY;
+            copyParam.srcArray = cuArray;
+			copyParam.srcPitch = srcChromaPitch;
 
-  //  for (uint32_t i = 0; i < encoderInputFrame->numChromaPlanes; ++i)
-  //  {
-  //      if (chromaHeight)
-		//{
-		//	memset(&copyParam, 0, sizeof(CUDA_MEMCPY2D));
-		//	copyParam.srcMemoryType = CU_MEMORYTYPE_ARRAY;
-		//	//copyParam.srcY = desc.Height;
-  //          copyParam.srcArray = cuArray;
-		//	copyParam.srcPitch = srcChromaPitch;
-
-  //          copyParam.dstMemoryType = CU_MEMORYTYPE_DEVICE;
-		//	copyParam.dstDevice = (CUdeviceptr)((uint8_t*)encoderInputFrame->inputPtr + encoderInputFrame->chromaOffsets[i]);
-		//	copyParam.dstPitch = destChromaPitch;
-		//	copyParam.WidthInBytes = chromaWidthInBytes;
-		//	copyParam.Height = chromaHeight;
-  //          cudaStatus = cuMemcpy2D(&copyParam);
-		//	if (cudaStatus != CUDA_SUCCESS) {
-		//		std::cerr << "Failed to copy CUDA array to device memory. : cudaError : " << cudaStatus << std::endl;
-		//	}
-		//}
-  //  }
-#else
-
-    memset((void*)&desc, 0, sizeof(CUDA_ARRAY_DESCRIPTOR));
-    cuErr = cuArrayGetDescriptor(&desc, cuArray);
-
-    cuMemcpyAtoA(inputArray, 0, cuArray, 0, pEnc->GetEncodeWidth() * pEnc->GetEncodeWidth() * 3 / 2 );
-
-    //auto cudaRes = cudaMemcpy2DToArray((cudaArray_t)inputArray, 0, 0, (cudaArray_t)cuArray, encoderInputFrame->pitch, pEnc->GetEncodeWidth(), pEnc->GetEncodeWidth(), cudaMemcpyDeviceToDevice);
-
-    //cudaError_t e = cudaMemcpy2DArrayToArray((cudaArray_t)inputArray, 0, 0, (cudaArray_t)cuArray, 0, 0, pEnc->GetEncodeWidth(), pEnc->GetEncodeWidth(), cudaMemcpyDeviceToDevice);
-
-    CUDA_MEMCPY2D copyParam = { 0 };
-    copyParam.srcArray = cuArray;
-    copyParam.srcMemoryType = CU_MEMORYTYPE_ARRAY;
-    copyParam.dstMemoryType = CU_MEMORYTYPE_ARRAY;
-    copyParam.dstArray = inputArray;
-    copyParam.dstPitch = encoderInputFrame->pitch;
-    copyParam.WidthInBytes = pEnc->GetEncodeWidth();
-    copyParam.Height = pEnc->GetEncodeHeight() * 3 / 2;
-#endif
+            copyParam.dstMemoryType = CU_MEMORYTYPE_DEVICE;
+			copyParam.dstDevice = (CUdeviceptr)((uint8_t*)encoderInputFrame->inputPtr + encoderInputFrame->chromaOffsets[i]);
+			copyParam.dstPitch = destChromaPitch;
+			copyParam.WidthInBytes = chromaWidthInBytes;
+			copyParam.Height = chromaHeight;
+            cudaStatus = cuMemcpy2D(&copyParam);
+			if (cudaStatus != CUDA_SUCCESS) {
+				std::cerr << "Failed to copy CUDA array to device memory. : cudaError : " << cudaStatus << std::endl;
+			}
+		}
+    }
     
     try
     {
@@ -396,9 +344,6 @@ HRESULT CudaH264Array::Capture(int wait)
 
     if (pDupTex2D && m_textureConverter)
 	{
-		// copy pduptex2D to m_pEncBuf
-		//pCtx->CopyResource(m_pEncBuf, pDupTex2D); // pour copier pDupTex2D dans m_pEncBuf
-
         m_textureConverter->convert(pDupTex2D, m_pEncBuf);
 	}
 
