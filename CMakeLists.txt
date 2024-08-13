@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.25)
 project(nvEncDXGIOutputDuplicationSample)
 
-set(CMAKE_CXX_STANDARD 14)
+set(CMAKE_CXX_STANDARD 17)
 #set(CUDA_PATH "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v12.0")
 set(NVCODEC_PATH "${CMAKE_SOURCE_DIR}/NvCodec")
 

@@ -35,7 +35,6 @@ extern "C" {
 };
 #include "Logger.h"
 
-using namespace std;
 
 extern simplelogger::Logger *logger;
 

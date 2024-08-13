@@ -35,8 +35,8 @@
 /// Demo 60 FPS (approx.) capture
 int Grab60FPS(int nFrames, int argc, char *argv[])
 {
-    //std::unique_ptr<CudaH264> Cudah264 = std::make_unique<CudaH264>(argc, argv);
-    std::unique_ptr<CudaH264Array> Cudah264 = std::make_unique<CudaH264Array>(argc, argv);
+    std::unique_ptr<CudaH264> Cudah264 = std::make_unique<CudaH264>(argc, argv);
+    //std::unique_ptr<CudaH264Array> Cudah264 = std::make_unique<CudaH264Array>(argc, argv);
     const int WAIT_BASE = 17; // 8 ms = 100 FPS
     HRESULT hr = S_OK;
     int capturedFrames = 0;
@@ -96,7 +96,7 @@ int Grab60FPS(int nFrames, int argc, char *argv[])
         /// use this to adjust the waiting period in each capture attempt to approximately attempt 60 captures in a second
         QueryPerformanceCounter(&start);
         /// Get a frame from DDA
-        hr = Cudah264->Capture(wait);
+        hr = Cudah264->Capture(WAIT_BASE);
         RESET_WAIT_TIME(start, end, interval, freq);
         std::cout << " ---- capture took " << interval.QuadPart / 1000 << " milliseconds" << std::endl;
 

@@ -3,8 +3,9 @@
 #include <wrl/client.h>
 #include <iostream>
 #include "d3dcompiler.h"
+#include <d3d11.h>
 #include <fstream>
-#include <winnt.h>
+#include <winrt/base.h>
 
 #include <cuda_runtime_api.h>
 
@@ -167,7 +168,8 @@ HRESULT CudaH264Array::InitEnc()
     try
     {
         //pEnc = new NvEnc(cuContext, w, h, eFormat); // TODO Error management
-        pEnc = new NvEncoderCuda(cuContext, w, h, m_pixelFormat); // TODO Error management
+        //pEnc = new NvEncoderCuda(cuContext, w, h, m_pixelFormat); // TODO Error management
+        pEnc = new NvEncoderD3D11(pD3DDev, w, h, m_pixelFormat); // TODO Error management
     }
     catch (std::exception &error)
     {
@@ -189,6 +191,28 @@ HRESULT CudaH264Array::InitEnc()
     m_textureConverter = std::make_unique<D3D11TextureConverter>(pD3DDev, pCtx);
     m_textureConverter->init();
 
+    return hr;
+}
+
+HRESULT CudaH264Array::Encode()
+{
+    HRESULT hr = S_OK;
+    const NvEncInputFrame *encoderInputFrame = pEnc->GetNextInputFrame();
+    ID3D11Texture2D* dstTexture = (ID3D11Texture2D*)encoderInputFrame->inputPtr;
+
+    winrt::com_ptr<ID3D11DeviceContext> contex;
+    pD3DDev->GetImmediateContext(contex.put());
+    contex->CopyResource(dstTexture, m_pEncBuf);
+
+    try
+    {
+        pEnc->EncodeFrame(vPacket);
+        WriteEncOutput();
+    }
+    catch (...)
+    {
+        hr = E_FAIL;
+    }
     return hr;
 }
 
@@ -266,24 +290,27 @@ HRESULT CudaH264Array::Encode(CUarray cuArray)
 	//copyParam.Height = desc.Height * 0.5;
 	//cudaStatus = cuMemcpy2D(&copyParam);
 
-    for (uint32_t i = 0; i < encoderInputFrame->numChromaPlanes; ++i)
-    {
-        if (chromaHeight)
-		{
-            copyParam.srcMemoryType = CU_MEMORYTYPE_ARRAY;
- //   copyParam.srcY = desc.Height;
-            copyParam.srcArray = cuArray;
-			copyParam.srcPitch = srcChromaPitch;
-			copyParam.dstDevice = (CUdeviceptr)((uint8_t*)encoderInputFrame->inputPtr + encoderInputFrame->chromaOffsets[i]);
-			copyParam.dstPitch = destChromaPitch;
-			copyParam.WidthInBytes = chromaWidthInBytes;
-			copyParam.Height = chromaHeight;
-            cudaStatus = cuMemcpy2D(&copyParam);
-			if (cudaStatus != CUDA_SUCCESS) {
-				std::cerr << "Failed to copy CUDA array to device memory. : cudaError : " << cudaStatus << std::endl;
-			}
-		}
-    }
+  //  for (uint32_t i = 0; i < encoderInputFrame->numChromaPlanes; ++i)
+  //  {
+  //      if (chromaHeight)
+		//{
+		//	memset(&copyParam, 0, sizeof(CUDA_MEMCPY2D));
+		//	copyParam.srcMemoryType = CU_MEMORYTYPE_ARRAY;
+		//	//copyParam.srcY = desc.Height;
+  //          copyParam.srcArray = cuArray;
+		//	copyParam.srcPitch = srcChromaPitch;
+
+  //          copyParam.dstMemoryType = CU_MEMORYTYPE_DEVICE;
+		//	copyParam.dstDevice = (CUdeviceptr)((uint8_t*)encoderInputFrame->inputPtr + encoderInputFrame->chromaOffsets[i]);
+		//	copyParam.dstPitch = destChromaPitch;
+		//	copyParam.WidthInBytes = chromaWidthInBytes;
+		//	copyParam.Height = chromaHeight;
+  //          cudaStatus = cuMemcpy2D(&copyParam);
+		//	if (cudaStatus != CUDA_SUCCESS) {
+		//		std::cerr << "Failed to copy CUDA array to device memory. : cudaError : " << cudaStatus << std::endl;
+		//	}
+		//}
+  //  }
 #else
 
     memset((void*)&desc, 0, sizeof(CUDA_ARRAY_DESCRIPTOR));
@@ -384,6 +411,7 @@ void CudaH264Array::WriteEncOutput()
     for (std::vector<uint8_t> &packet : vPacket)
     {
         fpOut.write(reinterpret_cast<char *>(packet.data()), packet.size());
+        fpOut.flush();
     }
 }
 
@@ -392,6 +420,7 @@ HRESULT CudaH264Array::Preproc()
     HRESULT hr = S_OK;
     size_t size;
 
+#if 1
     static bool isFirst = true;
 
     static CUgraphicsResource cuResource;
@@ -451,5 +480,8 @@ HRESULT CudaH264Array::Preproc()
         return E_FAIL;
     }
     returnIfError(hr);
+#else
+    Encode();
+#endif
     return hr;
 }

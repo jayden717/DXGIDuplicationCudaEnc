@@ -185,9 +185,6 @@ HRESULT CudaH264::InitEnc()
 
     pEnc->CreateEncoder(&initializeParams);
 
-    m_textureConverter = std::make_unique<D3D11TextureConverter>(pD3DDev, pCtx);
-    m_textureConverter->init();
-
     return hr;
 }
 
@@ -206,7 +203,6 @@ HRESULT CudaH264::Encode(CUarray_st *cuArray)
     // Assume encoderInputFrame->inputPtr is a device pointer
 
 
-#if 1
     CUDA_MEMCPY2D copyParam = {0};
     copyParam.srcArray = cuArray;
     copyParam.srcMemoryType = CU_MEMORYTYPE_ARRAY; // Use CU_MEMORYTYPE_ARRAY for src
@@ -215,40 +211,6 @@ HRESULT CudaH264::Encode(CUarray_st *cuArray)
     copyParam.dstPitch = encoderInputFrame->pitch;
     copyParam.WidthInBytes = pEnc->GetEncodeWidth() * 4; // BGRA: 4 bytes per pixel
     copyParam.Height = pEnc->GetEncodeHeight();
-#else
-
-    memset((void*)&desc, 0, sizeof(CUDA_ARRAY_DESCRIPTOR));
-    cuErr = cuArrayGetDescriptor(&desc, cuArray);
-
-    //cuMemcpyAtoA(inputArray, 0, cuArray, 0, pEnc->GetEncodeWidth() * pEnc->GetEncodeWidth() * 3 / 2 );
-
-    //auto cudaRes = cudaMemcpy2DToArray((cudaArray_t)inputArray, 0, 0, (cudaArray_t)cuArray, encoderInputFrame->pitch, pEnc->GetEncodeWidth(), pEnc->GetEncodeWidth(), cudaMemcpyDeviceToDevice);
-
-    //cudaError_t e = cudaMemcpy2DArrayToArray((cudaArray_t)inputArray, 0, 0, (cudaArray_t)cuArray, 0, 0, pEnc->GetEncodeWidth(), pEnc->GetEncodeWidth(), cudaMemcpyDeviceToDevice);
-
-    // Luma/Chroma can be done in a single transfer
-    CUDA_MEMCPY2D copyParam;
-    memset(&copyParam, 0, sizeof(CUDA_MEMCPY2D));
-
-    copyParam.srcXInBytes = 0;
-    copyParam.srcY = 0;
-    copyParam.srcMemoryType = CU_MEMORYTYPE_ARRAY;
-    copyParam.srcHost = 0;
-    copyParam.srcArray = cuArray;
-    //copyParam.srcPitch = src.step;
-
-    copyParam.dstXInBytes = 0;
-    copyParam.dstY = 0;
-    copyParam.dstMemoryType = CU_MEMORYTYPE_DEVICE;
-    copyParam.dstHost = 0;
-    copyParam.dstDevice = (CUdeviceptr)encoderInputFrame->inputPtr;
-    copyParam.dstArray = 0;
-    //copyParam.dstPitch = dst.step;
-
-    copyParam.WidthInBytes = desc.Width;
-    copyParam.Height = (desc.Height * 3) >> 1;
-#endif
-   
 
     CUresult cudaStatus = cuMemcpy2D(&copyParam);
     if (cudaStatus != CUDA_SUCCESS)
@@ -291,11 +253,6 @@ void CudaH264::Cleanup(bool bDelete)
         SAFE_RELEASE(m_pEncBuf);
         SAFE_RELEASE(pCtx);
     }
-
-	if (m_textureConverter) {
-		m_textureConverter->cleanup();
-        m_textureConverter.reset();
-	}
 }
 
 HRESULT CudaH264::Capture(int wait)
@@ -315,12 +272,10 @@ HRESULT CudaH264::Capture(int wait)
 		hr = pD3DDev->CreateTexture2D(&targetDesc, nullptr, &m_pEncBuf);
 	}
 
-    if (pDupTex2D && m_textureConverter)
+    if (pDupTex2D)
 	{
 		// copy pduptex2D to m_pEncBuf
 		pCtx->CopyResource(m_pEncBuf, pDupTex2D); // pour copier pDupTex2D dans m_pEncBuf
-
-        //m_textureConverter->convert(pDupTex2D, m_pEncBuf);
 	}
 
 	return hr;

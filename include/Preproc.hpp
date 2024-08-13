@@ -31,7 +31,6 @@
 #include <d3d11_2.h>
 #include <unordered_map>
 #include <cstdio>
-using namespace std;
 
 class RGBToNV12
 {

@@ -5,7 +5,6 @@
 #include "DDAImpl.hpp"
 #include "NvEncoder/NvEncoderCuda.h"
 #include "NvEncoder/NvEncoderD3D11.h"
-#include "D3D11TextureConverter.h"
 
 class CudaH264 : public IEncoder
 {
@@ -57,8 +56,6 @@ private:
     UINT failCount = 0;
     char **argv;
     int argc;
-
-    std::unique_ptr<D3D11TextureConverter> m_textureConverter;
 
 public:
     explicit CudaH264(int argc, char *_argv[]);

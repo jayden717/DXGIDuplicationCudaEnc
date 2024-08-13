@@ -4,6 +4,7 @@
 #include <memory>
 #include "DDAImpl.hpp"
 #include "NvEnc.h"
+#include "NvEncoderD3D11.h"
 #include "D3D11TextureConverter.h"
 
 class CudaH264Array : public IEncoder
@@ -25,7 +26,8 @@ private:
 
     /// NVENCODE API wrapper. Defined in NvEncoderCuda.h. This class is imported from NVIDIA Video SDK
     //NvEnc *pEnc;
-    NvEncoderCuda *pEnc;
+    //NvEncoderCuda *pEnc;
+    NvEncoderD3D11 *pEnc;
     /// D3D11 device context used for the operations demonstrated in this application
     ID3D11Device *pD3DDev = nullptr;
     CUdeviceptr dptr;
@@ -66,7 +68,7 @@ public:
     explicit CudaH264Array(int argc, char *_argv[]);
     ~CudaH264Array() override;
     HRESULT InitEnc() override;
-    HRESULT Encode() { return (S_OK); }
+    HRESULT Encode() override;
     HRESULT Encode(CUarray cuArray);
     HRESULT WriteRawFrame(ID3D11Texture2D *pBuffer);
     void Cleanup(bool bDelete) override;
