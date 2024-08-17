@@ -63,6 +63,8 @@ private:
     std::unique_ptr<D3D11TextureConverter> m_textureConverter;
 
     NV_ENC_BUFFER_FORMAT m_pixelFormat = NV_ENC_BUFFER_FORMAT_NV12;
+    CUgraphicsResource m_cuResource;
+    CUstream m_stream = 0;
 
 public:
     explicit CudaH264Array(int argc, char *_argv[]);
